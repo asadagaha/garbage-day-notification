@@ -1,3 +1,5 @@
+毎週日曜日に、西糀谷の来週のゴミ収集予定を教えてくれるツールです
+
 ■構築手順
 1. line developer のchannelを作成する
     参考：https://qiita.com/nkjm/items/38808bbc97d6927837cd
