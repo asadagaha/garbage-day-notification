@@ -2,5 +2,4 @@ init.sh
 .tf
 .terraform/
 ./envs/dev/.terraform/*
-./envs/dev/terraform.tfstate
-./envs/dev/terraform.tfstate.backup
+./envs/dev/terraform.tfstate*
