@@ -155,6 +155,8 @@ def lambda_handler(event:, context:)
     for i in weekly_schedule_list do
         text.concat("(#{i['dayOfWeek']}):  #{i['garbageType']}  \n")
     end
+    text.concat("■ゴミの分別方法はこちら↓  \n")
+    text.concat("https://www.city.ota.tokyo.jp/seikatsu/gomi/shigentogomi/katei-shigen-gomi_pamphlet.files/29wayaku.pdf  \n")
     push_message(text)
 
 end
