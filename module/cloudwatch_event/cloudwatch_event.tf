@@ -10,7 +10,7 @@ resource "aws_cloudwatch_event_target" "garbage_day_notification" {
     arn       = var.lambda_arn
 }
 
-resource "aws_lambda_permission" "allow_cloudwatch_to_call_output_report" {
+resource "aws_lambda_permission" "allow_cloudwatch_to_call_garbage_day_notification" {
     statement_id  = "AllowExecutionFromCloudWatch"
     action        = "lambda:InvokeFunction"
     function_name = var.function_name
