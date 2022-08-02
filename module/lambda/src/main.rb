@@ -20,7 +20,7 @@ def is_it_non_burnable_day_today(today)
     end
 
     tuesday_cnt = 0
-    date_cnt = Time.parse("#{today.year}-#{today.month}-01") # beginning of month
+    date_cnt = Time.parse("#{today.year}-#{today.month}/01") # beginning of month
     while date_cnt <= today do
           if date_cnt.tuesday? then
               tuesday_cnt += 1
@@ -153,7 +153,8 @@ def lambda_handler(event:, context:)
     
     text = "☆今週のごみ収集のお知らせ☆ \n"
     for i in weekly_schedule_list do
-        text.concat("(#{i['dayOfWeek']}):  #{i['garbageType']}  \n")
+        date = i['date'].gsub!("-","/")[5...10]
+        text.concat("#{date}(#{i['dayOfWeek']}):  #{i['garbageType']}  \n")
     end
     text.concat("■ゴミの分別方法はこちら↓  \n")
     text.concat("https://www.city.ota.tokyo.jp/seikatsu/gomi/shigentogomi/katei-shigen-gomi_pamphlet.files/29wayaku.pdf  \n")
