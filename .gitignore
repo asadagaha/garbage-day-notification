@@ -1,4 +1,4 @@
-init.sh
+utils/
 .tf
 .terraform/
 ./envs/dev/.terraform/*
