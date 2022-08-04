@@ -22,6 +22,7 @@ resource "aws_lambda_function" "garbage_day_notification" {
     variables = {
       DYNAMO_DB_TABLE_NAME = var.dynamo_db_table_name
       LINE_TOKEN = var.line_token
+      LINE_API_URL = var.line_api_url
     }
   }
 

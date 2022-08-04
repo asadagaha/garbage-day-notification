@@ -4,15 +4,21 @@ require 'logger'
 
 $logger = Logger.new($stdout)
 
+$logger.progname = File.basename(__FILE__)
+$logger.formatter = proc do |severity, datetime, progname, msg|
+  %Q|{"severity": "#{severity}", "datetime": "#{datetime.to_s}", "progname": "#{progname}", "message": "#{msg}"}\n|
+end
+
+$dynamo_db = Aws::DynamoDB::Client.new()
+
 
 NEW_YEAR_HOLIDAY = ['01-01', '01-02', '01-03']
 NON_BURNABLE_COLLECTION_WEEK = [2, 4]
 DAYS = ["日", "月", "火", "水", "木", "金", "土"]
-REQUEST_URL = "https://api.line.me/v2/bot/message/broadcast"
-LINE_TOKEN = ENV['LINE_TOKEN']
-DYNAMO_DB_TABLE_NAME = ENV['DYNAMO_DB_TABLE_NAME']
 
 
+
+### get garbage day modules
 def is_it_non_burnable_day_today(today)
     if !(today.tuesday?)
         $logger.error('invalid argument. today is not tuesday.')
@@ -20,7 +26,7 @@ def is_it_non_burnable_day_today(today)
     end
 
     tuesday_cnt = 0
-    date_cnt = Time.parse("#{today.year}-#{today.month}/01") # beginning of month
+    date_cnt = Time.parse("#{today.year}-#{today.month}-01") # beginning of month
     while date_cnt <= today do
           if date_cnt.tuesday? then
               tuesday_cnt += 1
@@ -65,63 +71,45 @@ def what_garbage_day_is_today(today)
 end
 
 
-def register_garbage_day_schedule(today, dynamo_db)
 
-    date_cnt = today
-    end_cnt = today + (60*60*24*30)
-    while date_cnt <= end_cnt do
-        garbageType = what_garbage_day_is_today(date_cnt)
-        ttl = (date_cnt + (60*60*24*2)).to_i
-
-        item = {
-            "date" => date_cnt.strftime("%Y-%m-%d"),
-            "dayOfWeek" => DAYS[date_cnt.wday],
-            "garbageType" => garbageType,
-            "ttl" => ttl
-        }
-        
-        begin
-            resp = dynamo_db.put_item({
-                item: item, 
-                table_name: DYNAMO_DB_TABLE_NAME, 
-            })
-        rescue => error
-            $logger.error("dynamo db put item failed. (detail:#{error})")
-        end
-        date_cnt += (60*60*24)
+### dynamo db modules
+def register_schedule(date, garbageType, dynamo_db)
+    item = {
+        "date" => date.strftime("%Y-%m-%d"),
+        "dayOfWeek" => DAYS[date.wday],
+        "garbageType" => garbageType,
+        "ttl" => date.to_i
+    }      
+    begin
+        resp = dynamo_db.put_item({
+            item: item, 
+            table_name: ENV['DYNAMO_DB_TABLE_NAME'], 
+        })
+    rescue => error
+        $logger.error("dynamo db put item exception. (detail:#{error})")
     end
 end
 
-def get_weekly_schedule(today, dynamo_db)
-    weekly_schedule_list = []
-    
-    date_cnt = today
-    end_cnt = today + (60*60*24*6)
-    while date_cnt <= end_cnt do
-        
-        begin 
-            resp = dynamo_db.get_item(
-                table_name: DYNAMO_DB_TABLE_NAME,
-                key: {
-                    date: date_cnt.strftime("%Y-%m-%d")
-                }
-            )
-        rescue => error
-            $logger.error("dynamo db get item failed. (detail:#{error})")
-        end
-        
-        item = resp.item
-        weekly_schedule_list.push(item)
-
-        date_cnt += (60*60*24)
+def get_schedule(date, dynamo_db)
+    begin 
+        resp = dynamo_db.get_item(
+            table_name: ENV['DYNAMO_DB_TABLE_NAME'],
+            key: {
+                date: date.strftime("%Y-%m-%d")
+            }
+        )
+    rescue => error
+        $logger.error("dynamo db get item exception. (detail:#{error})")
     end
-    
-    return weekly_schedule_list
+        
+    return resp.item
 end
 
 
-def push_message(text)
-    uri = URI.parse(REQUEST_URL)
+
+### line api modules
+def push_message(text, endpoint, token)
+    uri = URI.parse(endpoint)
     http = Net::HTTP.new(uri.host, uri.port)
     
     params = {
@@ -132,33 +120,59 @@ def push_message(text)
     }
     headers = {
         "Content-Type" => "application/json", 
-        "Authorization" => "Bearer " + LINE_TOKEN
+        "Authorization" => "Bearer " + token
     }
-    
-    response = http.post(uri.path, params.to_json, headers)
-    if response.code != "200"
-        $logger.error("line push failed. (response code:#{response.code} body:#{response.body})")
+
+    begin 
+        resp = http.post(uri.path, params.to_json, headers)
+    rescue => error
+        $logger.error("line push exception. (detail:#{error})")
     end
+
+    return resp
 end
 
 
+
+### lambda handler
 def lambda_handler(event:, context:)
-    dynamo_db = Aws::DynamoDB::Client.new()
-    today = Time.now + (60*60*9)
-    
-    register_garbage_day_schedule(today, dynamo_db)
-    
-    weekly_schedule_list = get_weekly_schedule(today, dynamo_db) 
-    
-    
+    today = Time.now + (60*60*9) 
+
+    next_week = today + (60*60*24*7)
+    if today.month < next_week.month then
+        date_cnt = next_week
+        while true do
+            garbageType = what_garbage_day_is_today(date_cnt) 
+            register_schedule(date_cnt, garbageType, $dynamo_db)
+
+            next_day = date_cnt + (60*60*24)
+            if date_cnt.month < next_day.month then
+                break
+            end
+            date_cnt = next_day
+        end  
+    end
+
+    weekly_schedule_list = []
+    while today < next_week do
+        weekly_schedule_list.push(get_schedule(today, $dynamo_db) )
+    end
+
     text = "☆今週のごみ収集のお知らせ☆ \n"
     for i in weekly_schedule_list do
         date = i['date'].gsub!("-","/")[5...10]
         text.concat("#{date}(#{i['dayOfWeek']}):  #{i['garbageType']}  \n")
     end
+    text.concat("\n")
     text.concat("■ゴミの分別方法はこちら↓  \n")
     text.concat("https://www.city.ota.tokyo.jp/seikatsu/gomi/shigentogomi/katei-shigen-gomi_pamphlet.files/29wayaku.pdf  \n")
-    push_message(text)
+
+    resp = push_message(text, ENV['LINE_API_URL'], ENV['LINE_TOKEN'])
+    if resp.code != "200"
+        $logger.error("line push failed. (resp code:#{resp.code} body:#{resp.body})")
+    end
+
+
 
 end
 
