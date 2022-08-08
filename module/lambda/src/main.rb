@@ -132,13 +132,11 @@ def push_message(text, endpoint, token)
     return resp
 end
 
-
-
 ### lambda handler
 def lambda_handler(event:, context:)
     today = Time.now + (60*60*9) 
-
     next_week = today + (60*60*24*7)
+    
     if today.month < next_week.month then
         date_cnt = next_week
         while true do
@@ -156,6 +154,7 @@ def lambda_handler(event:, context:)
     weekly_schedule_list = []
     while today < next_week do
         weekly_schedule_list.push(get_schedule(today, $dynamo_db) )
+        today += (60*60*24)
     end
 
     text = "☆今週のごみ収集のお知らせ☆ \n"
@@ -171,9 +170,4 @@ def lambda_handler(event:, context:)
     if resp.code != "200"
         $logger.error("line push failed. (resp code:#{resp.code} body:#{resp.body})")
     end
-
-
-
 end
-
-
