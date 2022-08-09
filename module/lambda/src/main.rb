@@ -9,8 +9,6 @@ $logger.formatter = proc do |severity, datetime, progname, msg|
   %Q|{"severity": "#{severity}", "datetime": "#{datetime.to_s}", "progname": "#{progname}", "message": "#{msg}"}\n|
 end
 
-$dynamo_db = Aws::DynamoDB::Client.new()
-
 
 NEW_YEAR_HOLIDAY = ['01-01', '01-02', '01-03']
 NON_BURNABLE_COLLECTION_WEEK = [2, 4]
@@ -132,23 +130,19 @@ def push_message(text, endpoint, token)
     return resp
 end
 
-### lambda handler
-def lambda_handler(event:, context:)
-    today = Time.now + (60*60*9) 
-    next_week = today + (60*60*24*7)
-    
-    if today.month < next_week.month then
-        date_cnt = next_week
-        while true do
-            garbageType = what_garbage_day_is_today(date_cnt) 
-            register_schedule(date_cnt, garbageType, $dynamo_db)
+def main(today, dynamo_db, ine_api_url,line_token)
+    result = true
 
-            next_day = date_cnt + (60*60*24)
-            if date_cnt.month < next_day.month then
-                break
-            end
-            date_cnt = next_day
-        end  
+    next_week = today + (60*60*24*7)
+    item = get_schedule(today, dynamo_db)
+    if item.nil? then
+        $logger.info("item is not registered. put item.")
+        date_cnt = today
+        while date_cnt < next_week do
+            garbageType = what_garbage_day_is_today(date_cnt) 
+            register_schedule(date_cnt, garbageType, dynamo_db)
+            date_cnt += (60*60*24)
+        end
     end
 
     weekly_schedule_list = []
@@ -166,8 +160,18 @@ def lambda_handler(event:, context:)
     text.concat("■ゴミの分別方法はこちら↓  \n")
     text.concat("https://www.city.ota.tokyo.jp/seikatsu/gomi/shigentogomi/katei-shigen-gomi_pamphlet.files/29wayaku.pdf  \n")
 
-    resp = push_message(text, ENV['LINE_API_URL'], ENV['LINE_TOKEN'])
+    resp = push_message(text, ine_api_url, line_token)
     if resp.code != "200"
         $logger.error("line push failed. (resp code:#{resp.code} body:#{resp.body})")
+        result = Falsse
     end
+    return result
+end
+
+
+### lambda handler
+def lambda_handler(event:, context:)
+    today = Time.now + (60*60*9) 
+    dynamo_db = Aws::DynamoDB::Client.new()
+    main(today, dynamo_db, ENV['LINE_API_URL'], ENV['LINE_TOKEN'])
 end

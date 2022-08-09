@@ -36,6 +36,17 @@ def shutdown_dynamo_db
     $dynamo_db_container.remove    
 end
 
+def setup_line_client
+    WebMock.stub_request(:post, "#{MOCK_URI}").to_return(
+        body: {"body":"成功時に帰ってくるbody"}.to_json,
+        status: 200,
+        headers: { 
+            "Content-Type" => "application/json", 
+            "Authorization" => "Bearer " + ENV['LINE_TOKEN']
+        }
+    )
+end
+
 def create_table
     resp = $dynamo_db.create_table({
         attribute_definitions: [{
@@ -214,23 +225,54 @@ end
 class TestPushMessage < Test::Unit::TestCase
     class << self
         def startup
-            WebMock.stub_request(:post, "#{MOCK_URI}").to_return(
-                body: {"body":"成功時に帰ってくるbody"}.to_json,
-                status: 200,
-                headers: { 
-                    "Content-Type" => "application/json", 
-                    "Authorization" => "Bearer " + ENV['LINE_TOKEN']
-                }
-            )
+            setup_line_client
         end
     end
 
     def test_push_success
         text = "hello"
         endpoint = "http://#{MOCK_URI}/"
-        resp = push_message(text, endpoint, ENV['LINE_TOKEN'])
+        line_token = "dummy-token"
+        resp = push_message(text, endpoint, line_token)
         assert_equal("200", resp.code)
     end
 end
 
 
+class TestMain < Test::Unit::TestCase
+    class << self
+        def startup
+            setup_dynamo_db
+            setup_line_client
+        end
+    
+        def shutdown
+            shutdown_dynamo_db
+        end
+    end
+
+    def setup
+        create_table
+    end
+
+    def teardown
+        delete_table
+    end
+
+    def test_not_registered_item
+        today = Time.parse("2022-07-01")
+        line_api_url = "http://#{MOCK_URI}/"
+        line_token = "dummy-token"
+
+        assert_equal(true, main(today, $dynamo_db, line_api_url, line_token))
+    
+        next_week = today + (60*60*24*7)
+        date_cnt = today
+        while date_cnt < next_week do
+            item = get_schedule(date_cnt, $dynamo_db)
+            assert_equal(date_cnt.strftime("%Y-%m-%d"), item['date'])
+            date_cnt += (60*60*24)
+        end
+    end
+    
+end
