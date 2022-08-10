@@ -73,10 +73,10 @@ end
 ### dynamo db modules
 def register_schedule(date, garbageType, dynamo_db)
     item = {
-        "date" => date.strftime("%Y-%m-%d"),
-        "dayOfWeek" => DAYS[date.wday],
-        "garbageType" => garbageType,
-        "ttl" => date.to_i
+        date: date.strftime("%Y-%m-%d"),
+        dayOfWeek: DAYS[date.wday],
+        garbageType: garbageType,
+        ttl: date.to_i
     }      
     begin
         resp = dynamo_db.put_item({
