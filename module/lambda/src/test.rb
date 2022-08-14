@@ -1,179 +1,320 @@
-require 'time'
-require 'aws-sdk'
-require 'logger'
+require 'test/unit'
+require 'docker'
+require 'webmock'
+require 'net/https'
+require './main'
 
-$logger = Logger.new($stdout)
 
-$logger.progname = File.basename(__FILE__)
-$logger.formatter = proc do |severity, datetime, progname, msg|
-  %Q|{"severity": "#{severity}", "datetime": "#{datetime.to_s}", "progname": "#{progname}", "message": "#{msg}"}\n|
-end
 
+$dynamo_db_container
 $dynamo_db
+WebMock.enable!
+WebMock.allow_net_connect!
 
+LINE_MOCK_URI = "http://www.push-test.com"
+SLACK_MOCK_URI = "https://www.slack-test.com"
 
-NEW_YEAR_HOLIDAY = ['01-01', '01-02', '01-03']
-NON_BURNABLE_COLLECTION_WEEK = [2, 4]
-DAYS = ["日", "月", "火", "水", "木", "金", "土"]
+def setup_dynamo_db
+    Docker.url = 'unix:///var/run/docker.sock'
+    port = "8000"
 
+    $dynamo_db_container = Docker::Container.create(
+        "name" => 'dynamo_db',
+        "Image" => 'amazon/dynamodb-local',
+        "Cmd" => ["-jar", "DynamoDBLocal.jar", "-sharedDb"],
+        "PortBindings" => {
+            "#{port}/tcp" => [{
+                "HostPort" => "#{port}"
+            }],
+        }
+    )
+    $dynamo_db_container.start
 
-
-### get garbage day modules
-def is_it_non_burnable_day_today(today)
-    if !(today.tuesday?)
-        $logger.error('invalid argument. today is not tuesday.')
-        return false
-    end
-
-    tuesday_cnt = 0
-    date_cnt = Time.parse("#{today.year}-#{today.month}-01") # beginning of month
-    while date_cnt <= today do
-          if date_cnt.tuesday? then
-              tuesday_cnt += 1
-          end
-          date_cnt+= (60*60*24)
-    end
-    if NON_BURNABLE_COLLECTION_WEEK.include?(tuesday_cnt) then
-        result = true
-    else
-        result = false
-    end
-    
-    return result
+    $dynamo_db = Aws::DynamoDB::Client.new(
+        endpoint: "http://localhost:#{port}", 
+        region: 'ap-northeast-1'    
+    )
+    sleep 2
 end
-    
-def what_garbage_day_is_today(today)
-    garbageType = ""
-    if NEW_YEAR_HOLIDAY.include?(today.strftime("%m-%d")) then
-        garbageType = "年末年始のため回収なし"
-        return garbageType
+
+def shutdown_dynamo_db
+    sleep 2
+    $dynamo_db_container.stop
+    $dynamo_db_container.remove    
+end
+
+def setup_line_client
+    WebMock.stub_request(:post, LINE_MOCK_URI).to_return(
+        body: {"body":"成功時に帰ってくるbody"}.to_json,
+        status: 200,
+        headers: { 
+            "Content-Type" => "application/json", 
+            "Authorization" => "Bearer " + ENV['LINE_TOKEN']
+        }
+    )
+end
+
+def setup_slack_client
+    WebMock.stub_request(:post, SLACK_MOCK_URI).to_return(
+        body: {"body":"成功時に帰ってくるbody"}.to_json,
+        status: 200,
+        headers: { 
+            "Content-Type" => "application/json", 
+        }
+    )
+end
+
+
+
+def create_table
+    resp = $dynamo_db.create_table({
+        attribute_definitions: [{
+            attribute_name: "date",
+            attribute_type: "S"
+        }],
+        table_name: ENV['DYNAMO_DB_TABLE_NAME'] ,
+        key_schema: [{
+            attribute_name: "date",
+            key_type: "HASH",
+        }],
+        billing_mode: "PAY_PER_REQUEST"
+    })
+    resp = $dynamo_db.update_time_to_live({
+        table_name: ENV['DYNAMO_DB_TABLE_NAME'] ,
+        time_to_live_specification: { 
+            enabled: true,
+            attribute_name: "ttl",
+        },
+    })
+end
+
+def delete_table
+    resp = $dynamo_db.delete_table({
+        table_name: ENV['DYNAMO_DB_TABLE_NAME'] , 
+    })
+end
+
+
+class TestIsItNonBurnableDayToday < Test::Unit::TestCase
+    def test_second_tuesday
+        today = Time.parse("2022/08/09") # sencond tuesday
+        assert_equal(true, non_burnable_day_today?(today))
     end
+    def test_fourth_tuesday
+        today = Time.parse("2022/08/23") # fourth tuesday
+        assert_equal(true, non_burnable_day_today?(today))
+    end
+    def test_not_tuesday
+        today = Time.parse("2022/08/01") # monday
+        assert_equal(false, non_burnable_day_today?(today))
+    end
+    def test_not_garbage_tuesday
+        today = Time.parse("2022/08/02") # first tuesday
+        assert_equal(false, non_burnable_day_today?(today))
+    end
+end
+
+class TestWhatGarbageDayIsToday < Test::Unit::TestCase
+    def test_new_year_holiday
+        today = Time.parse("2022/01/01") # new year holiday
+        assert_equal("年末年始のため回収なし", what_garbage_day?(today))
+    end
+    def test_monday
+        today = Time.parse("2022/08/01") # monday
+        assert_equal("燃えるごみ", what_garbage_day?(today))
+    end
+    def test_first_tuesday
+        today = Time.parse("2022/08/02") # first tuesday
+        assert_equal("-", what_garbage_day?(today))
+    end
+    def test_second_tuesday
+        today = Time.parse("2022/08/09") # second tuesday
+        assert_equal("不燃ごみ", what_garbage_day?(today))
+    end
+    def test_wednesday
+        today = Time.parse("2022/08/03") # wednesday
+        assert_equal("資源ごみ", what_garbage_day?(today))
+    end
+    def test_thursday
+        today = Time.parse("2022/08/04") # thursday
+        assert_equal("燃えるごみ", what_garbage_day?(today))
+    end
+    def test_non_garbage_day
+        today = Time.parse("2022/08/05") # not garbage day(friday)
+        assert_equal("-", what_garbage_day?(today))
+    end
+end
+
+class TestRegisterSchedule < Test::Unit::TestCase
     
-    dayOfWeek = DAYS[today.wday]
-    case dayOfWeek
-    when "月" then
-      garbageType = "燃えるごみ"
-    when "火" then
-        if is_it_non_burnable_day_today(today) then
-            garbageType = '不燃ごみ'
-        else
-            garbageType = '-'
+    class << self
+        def startup
+            setup_dynamo_db
         end
-    when "水" then
-        garbageType = "資源ごみ"
-    when "木" then
-        garbageType = "燃えるごみ"
-    else
-        garbageType = "-"
-    end
-
-    return garbageType
-end
-
-
-
-### dynamo db modules
-def register_schedule(date, garbageType, dynamo_db)
-    item = {
-        "date" => date.strftime("%Y-%m-%d"),
-        "dayOfWeek" => DAYS[date.wday],
-        "garbageType" => garbageType,
-        "ttl" => date.to_i
-    }      
-    begin
-        resp = dynamo_db.put_item({
-            item: item, 
-            table_name: ENV['DYNAMO_DB_TABLE_NAME'], 
-        })
-    rescue => error
-        $logger.error("dynamo db put item exception. (detail:#{error})")
-    end
-end
-
-def get_schedule(date, dynamo_db)
-    begin 
-        resp = dynamo_db.get_item(
-            table_name: ENV['DYNAMO_DB_TABLE_NAME'],
-            key: {
-                date: date.strftime("%Y-%m-%d")
-            }
-        )
-    rescue => error
-        $logger.error("dynamo db get item exception. (detail:#{error})")
-    end
-        
-    return resp.item
-end
-
-
-
-### line api modules
-def push_message(text, endpoint, token)
-    uri = URI.parse(endpoint)
-    http = Net::HTTP.new(uri.host, uri.port)
     
-    params = {
-        messages: [{
-            type: 'text',
-            text: text
-        }]
-    }
-    headers = {
-        "Content-Type" => "application/json", 
-        "Authorization" => "Bearer " + token
-    }
-
-    begin 
-        resp = http.post(uri.path, params.to_json, headers)
-    rescue => error
-        $logger.error("line push exception. (detail:#{error})")
+        def shutdown
+            shutdown_dynamo_db
+        end
     end
 
-    return resp
+    def setup
+        create_table
+    end
+
+    def teardown
+        delete_table
+    end
+
+
+    def test_register_success
+        date_str = "2022-08-01"
+        date = Time.parse(date_str)
+        garbageType = "燃えるごみ"
+        register_schedule(date, garbageType, $dynamo_db)
+        result = $dynamo_db.scan(
+            table_name: ENV['DYNAMO_DB_TABLE_NAME'] 
+        )
+        assert_equal(1, result.items.size)
+
+        result = $dynamo_db.get_item({
+            table_name: ENV['DYNAMO_DB_TABLE_NAME'] ,
+            key: {
+              "date" => date_str,
+            },
+        })
+        item = result['item']
+
+        assert_equal(date_str, item['date'])
+        assert_equal("月", item['dayOfWeek'])
+        assert_equal(garbageType, item['garbageType'])
+        assert_equal(date.to_i, item['ttl'])
+    end 
+=begin
+    def test_dynamo_db_down
+        $dynamo_db_container.stop
+
+        date = Time.parse("2022/08/01")
+        garbageType = "燃えるごみ"
+        register_schedule(date, garbageType, $dynamo_db)
+        result = $dynamo_db.scan(
+            table_name: DYNAMO_DB_TABLE_NAME
+        )
+        puts result
+
+        $dynamo_db_container.start
+    end        
+=end
+
 end
 
-def main(today, dynamo_db, ine_api_url,line_token)
-    result = true
+class TestGetSchedule < Test::Unit::TestCase
+    class << self
+        def startup
+            setup_dynamo_db
+        end
+    
+        def shutdown
+            shutdown_dynamo_db
+        end
+    end
 
-    next_week = today + (60*60*24*7)
-    item = get_schedule(today, dynamo_db)
-    if item.nil? then
-        $logger.info("item is not registered. put item.")
+    def setup
+        create_table
+    end
+
+    def teardown
+        delete_table
+    end
+
+    def test_get_success
+        date = Time.parse("2022-08-01")
+        garbageType = "燃えるごみ"
+        register_schedule(date, garbageType, $dynamo_db)
+        item = {
+            "date" => date.strftime("%Y-%m-%d"),
+            "dayOfWeek" => DAYS[date.wday],
+            "garbageType" => garbageType,
+            "ttl" => date.to_i
+        }
+        assert_equal(item, get_schedule(date, $dynamo_db))
+    end 
+    
+end
+
+class TestPushMessage < Test::Unit::TestCase
+    class << self
+        def startup
+            setup_line_client
+        end
+    end
+
+    def test_push_success
+        text = "hello"
+        endpoint = "#{LINE_MOCK_URI}/"
+        line_token = "dummy-token"
+        result = push_message(text, endpoint, line_token)
+        assert_equal(true, result)
+    end
+end
+
+class TestErrorNotify < Test::Unit::TestCase
+    class << self
+        def startup
+            setup_slack_client
+        end
+    end
+
+
+    def test_error_notify
+        setup_slack_client
+        endpoint = "#{SLACK_MOCK_URI}/"
+        result = notify_error(endpoint)
+        assert_equal(true, result)
+    end
+    
+end
+
+
+
+class TestMain < Test::Unit::TestCase
+    class << self
+        def startup
+            setup_dynamo_db
+            setup_line_client
+        end
+    
+        def shutdown
+            shutdown_dynamo_db
+        end
+    end
+
+    def setup
+        create_table
+    end
+
+    def teardown
+        delete_table
+    end
+
+    def test_not_registered_item
+        today = Time.parse("2022-07-01")
+        line_api_url = "#{LINE_MOCK_URI}/"
+        slack_api_url = "#{SLACK_MOCK_URI}/"
+        line_token = "dummy-token"
+
+        assert_equal(true, main(today, $dynamo_db, line_api_url, line_token, slack_api_url))
+    
+        next_week = today + (60*60*24*7)
         date_cnt = today
         while date_cnt < next_week do
-            garbageType = what_garbage_day_is_today(date_cnt) 
-            register_schedule(date_cnt, garbageType, dynamo_db)
+            item = get_schedule(date_cnt, $dynamo_db)
+            assert_equal(date_cnt.strftime("%Y-%m-%d"), item['date'])
             date_cnt += (60*60*24)
         end
     end
-
-    weekly_schedule_list = []
-    while today < next_week do
-        weekly_schedule_list.push(get_schedule(today, $dynamo_db) )
-        today += (60*60*24)
-    end
-
-    text = "☆今週のごみ収集のお知らせ☆ \n"
-    for i in weekly_schedule_list do
-        date = i['date'].gsub!("-","/")[5...10]
-        text.concat("#{date}(#{i['dayOfWeek']}):  #{i['garbageType']}  \n")
-    end
-    text.concat("\n")
-    text.concat("■ゴミの分別方法はこちら↓  \n")
-    text.concat("https://www.city.ota.tokyo.jp/seikatsu/gomi/shigentogomi/katei-shigen-gomi_pamphlet.files/29wayaku.pdf  \n")
-
-    resp = push_message(text, ine_api_url, line_token)
-    if resp.code != "200"
-        $logger.error("line push failed. (resp code:#{resp.code} body:#{resp.body})")
-        result = Falsse
-    end
-    return result
+    
 end
 
 
-### lambda handler
-def lambda_handler(event:, context:)
-    today = Time.now + (60*60*9) 
-    $dynamo_db = Aws::DynamoDB::Client.new()
-    main(today, $dynamo_db, ENV['LINE_API_URL'], ENV['LINE_TOKEN'])
-end
+
+

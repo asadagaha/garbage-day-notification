@@ -4,12 +4,16 @@ variable "line_token" {
 variable "line_api_url" {
     type = string
 }
+variable "slack_api_url" {
+    type = string
+}
 
 module "lambda" {
   source                           = "../../module/lambda"
   dynamo_db_table_name             = module.dynamo_db.table_name
   line_token                       = var.line_token
   line_api_url                     = var.line_api_url
+  slack_api_url                    = var.slack_api_url
 }
 
 module "dynamo_db" {

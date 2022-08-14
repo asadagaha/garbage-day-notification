@@ -8,3 +8,7 @@ variable "line_token" {
 variable "line_api_url" {
     type = string
 }
+
+variable "slack_api_url" {
+    type = string
+}

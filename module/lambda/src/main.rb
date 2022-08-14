@@ -9,15 +9,15 @@ $logger.formatter = proc do |severity, datetime, progname, msg|
   %Q|{"severity": "#{severity}", "datetime": "#{datetime.to_s}", "progname": "#{progname}", "message": "#{msg}"}\n|
 end
 
+$dynamo_db
 
 NEW_YEAR_HOLIDAY = ['01-01', '01-02', '01-03']
 NON_BURNABLE_COLLECTION_WEEK = [2, 4]
 DAYS = ["日", "月", "火", "水", "木", "金", "土"]
 
 
-
 ### get garbage day modules
-def is_it_non_burnable_day_today(today)
+def non_burnable_day_today?(today)
     if !(today.tuesday?)
         $logger.error('invalid argument. today is not tuesday.')
         return false
@@ -40,7 +40,7 @@ def is_it_non_burnable_day_today(today)
     return result
 end
     
-def what_garbage_day_is_today(today)
+def what_garbage_day?(today)
     garbageType = ""
     if NEW_YEAR_HOLIDAY.include?(today.strftime("%m-%d")) then
         garbageType = "年末年始のため回収なし"
@@ -52,7 +52,7 @@ def what_garbage_day_is_today(today)
     when "月" then
       garbageType = "燃えるごみ"
     when "火" then
-        if is_it_non_burnable_day_today(today) then
+        if non_burnable_day_today?(today) then
             garbageType = '不燃ごみ'
         else
             garbageType = '-'
@@ -107,6 +107,8 @@ end
 
 ### line api modules
 def push_message(text, endpoint, token)
+    result = false
+
     uri = URI.parse(endpoint)
     http = Net::HTTP.new(uri.host, uri.port)
     
@@ -125,21 +127,58 @@ def push_message(text, endpoint, token)
         resp = http.post(uri.path, params.to_json, headers)
     rescue => error
         $logger.error("line push exception. (detail:#{error})")
+        return result
     end
 
-    return resp
+    if resp.code != "200"
+        $logger.error("line push failed. (resp code:#{resp.code} body:#{resp.body})")
+        return result
+    end
+
+    result = true
+    return result
 end
 
-def main(today, dynamo_db, ine_api_url,line_token)
-    result = true
+def notify_error(endpoint)
+    result = false
 
+    uri = URI.parse(endpoint)
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = true
+    
+    params = {
+        text: 'error occured'
+    }
+    headers = {
+        "Content-Type" => "application/json", 
+    }
+    
+
+    begin 
+        resp = http.post(uri.path, params.to_json, headers)
+    rescue => error
+        $logger.error("notify error exception. (detail:#{error})")
+        return result
+    end
+
+    if resp.code != "200"
+        $logger.error("notify error failed. (resp code:#{resp.code} body:#{resp.body})")
+        return result
+    end
+
+    result = true
+    return result
+end
+
+
+def main(today, dynamo_db, ine_api_url,line_token, slack_api_url)
     next_week = today + (60*60*24*7)
     item = get_schedule(today, dynamo_db)
     if item.nil? then
         $logger.info("item is not registered. put item.")
         date_cnt = today
         while date_cnt < next_week do
-            garbageType = what_garbage_day_is_today(date_cnt) 
+            garbageType = what_garbage_day?(date_cnt) 
             register_schedule(date_cnt, garbageType, dynamo_db)
             date_cnt += (60*60*24)
         end
@@ -160,12 +199,12 @@ def main(today, dynamo_db, ine_api_url,line_token)
     text.concat("■ゴミの分別方法はこちら↓  \n")
     text.concat("https://www.city.ota.tokyo.jp/seikatsu/gomi/shigentogomi/katei-shigen-gomi_pamphlet.files/29wayaku.pdf  \n")
 
-    resp = push_message(text, ine_api_url, line_token)
-    if resp.code != "200"
-        $logger.error("line push failed. (resp code:#{resp.code} body:#{resp.body})")
-        result = Falsse
+    result = push_message(text, ine_api_url, line_token)
+    if result == false then
+        notify_error(slack_api_url)
     end
-    return result
+
+    $logger.info("this process was successfull.")
 end
 
 
@@ -173,5 +212,5 @@ end
 def lambda_handler(event:, context:)
     today = Time.now + (60*60*9) 
     $dynamo_db = Aws::DynamoDB::Client.new()
-    main(today, $dynamo_db, ENV['LINE_API_URL'], ENV['LINE_TOKEN'])
+    main(today, $dynamo_db, ENV['LINE_API_URL'], ENV['LINE_TOKEN'], ENV['SLACK_API_URL'])
 end
