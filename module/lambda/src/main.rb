@@ -172,6 +172,6 @@ end
 ### lambda handler
 def lambda_handler(event:, context:)
     today = Time.now + (60*60*9) 
-    dynamo_db = Aws::DynamoDB::Client.new()
-    main(today, dynamo_db, ENV['LINE_API_URL'], ENV['LINE_TOKEN'])
+    $dynamo_db = Aws::DynamoDB::Client.new()
+    main(today, $dynamo_db, ENV['LINE_API_URL'], ENV['LINE_TOKEN'])
 end
