@@ -2,7 +2,7 @@ version: 2
 
 jobs:
   plan-apply:
-    working_directory: /tmp/project/envs/dev
+    working_directory: /tmp/project/
     docker:
       - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
     steps:
@@ -17,7 +17,7 @@ jobs:
       - persist_to_workspace:
           root: .
           paths:
-            - .
+            - ./envs/dev
 
   apply:
     docker:
