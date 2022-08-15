@@ -2,7 +2,7 @@ version: 2
 
 jobs:
   plan-apply:
-    working_directory: /tmp/project/envs/dev
+    working_directory: /tmp/project
     docker:
       - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
     steps:
@@ -10,7 +10,7 @@ jobs:
       - run:
           name: terraform init & plan
           command: |
-            terraform init -input=false
+            terraform init ./envs/dev
             terraform fmt
             terraform validate
             terraform plan -out tfapply            
