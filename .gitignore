@@ -1,7 +1,7 @@
 utils/
 .tf
 .terraform/
-./envs/dev/.terraform/*
-./envs/dev/terraform.tfstate* 
-./terraform.tfstate.d
+envs/dev/.terraform/*
+envs/dev/terraform.tfstate* 
+terraform.tfstate.d
 ./DS_Store
