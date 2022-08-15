@@ -13,6 +13,7 @@ workflows:
           requires:
             - terraform/fmt
       - terraform/plan:
+          path: ./envs/dev
           checkout: true
           context: terraform
           persist-workspace: true
