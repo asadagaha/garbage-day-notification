@@ -10,7 +10,7 @@ jobs:
       - run:
           name: terraform init & plan
           command: |
-            terraform init ./envs/dev
+            "terraform init ./envs/dev"
             terraform fmt
             terraform validate
             terraform plan -out tfapply            
