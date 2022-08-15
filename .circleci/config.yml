@@ -11,7 +11,7 @@ workflows:
           checkout: true
           context: terraform
           requires:
-            - terraform/fmt
+            - terraform/fmt   
       - terraform/plan:
           path: ./envs/dev
           checkout: true
