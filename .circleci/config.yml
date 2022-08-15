@@ -25,4 +25,4 @@ workflows:
             branches:
               only: main
           requires:
-            - terraform/plan
+            - terraform/plan 
