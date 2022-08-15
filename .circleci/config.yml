@@ -20,6 +20,7 @@ workflows:
           requires:
             - terraform/validate
       - terraform/apply:
+          path: ./envs/dev
           attach-workspace: true  
           context: terraform
           filters:
