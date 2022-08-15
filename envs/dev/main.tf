@@ -1,13 +1,3 @@
-variable "line_token" {
-    type = string
-}
-variable "line_api_url" {
-    type = string
-}
-variable "slack_api_url" {
-    type = string
-}
-
 module "lambda" {
   source                           = "../../module/lambda"
   dynamo_db_table_name             = module.dynamo_db.table_name
@@ -25,3 +15,4 @@ module "cloudwatch_event" {
   lambda_arn                       = module.lambda.lambda_arn  
   function_name                    = module.lambda.function_name
 }
+
