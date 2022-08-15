@@ -1,28 +1,44 @@
-version: 2.1
-orbs:
-  terraform: "circleci/terraform@2.1.0"
+version: 2
+
+jobs:
+  plan-apply:
+    working_directory: /tmp/project
+    docker:
+      - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
+    steps:
+      - checkout
+      - run:
+          name: terraform init & plan
+          command: |
+            terraform init -input=false -backend-config="bucket=$AWS_S3" -backend-config="key=terraform/terraform.tfstate" -backend-config="region=ap-northeast-1"
+            terraform fmt
+            terraform validate
+            terraform plan -out tfapply            
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  apply:
+    docker:
+      - image: docker.mirror.hashicorp.services/hashicorp/terraform:light
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: terraform
+          command: |
+                        terraform apply -auto-approve tfapply
+
 workflows:
-  deploy_infrastructure:
+  version: 2
+  plan_approve_apply:
     jobs:
-      - terraform/fmt:
-          checkout: true
-          context: terraform
-      - terraform/validate:
-          checkout: true
-          context: terraform
+      - plan-apply
+      - hold-apply:
+          type: approval
           requires:
-            - terraform/fmt
-      - terraform/plan:
-          checkout: true
-          context: terraform
-          persist-workspace: true
+            - plan-apply
+      - apply:
           requires:
-            - terraform/validate
-      - terraform/apply:
-          attach-workspace: true
-          context: terraform
-          filters:
-            branches:
-              only: main
-          requires:
-            - terraform/plan
+            - hold-apply
